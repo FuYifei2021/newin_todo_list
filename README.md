@@ -79,6 +79,28 @@ npm run build
 
 ---
 
+> **实际部署记录 (2026-06-27)**: 以下列出本指南执行过程中的关键偏差与经验，供后续执行者参考：
+>
+> **系统预装情况**：NVIDIA 驱动 610.62 / CUDA 13.3 (nvcc) / cuDNN v9.23 已预装，均高于指南最低要求，无需重复安装。
+>
+> **大文件下载超时**：PyTorch wheel (2.6GB) 和 Ollama 安装包 (1.32GB) 通过 `winget` / `uv` 下载均会因超时失败。解决方案：
+> - PyTorch: 使用 `uv pip install` 配合 `--timeout 5400000` (90分钟超时)，或指定精确版本 `torch==2.11.0+cu128` 减少解析时间
+> - 通用方案: 提示用户手动下载到 `D:\AI_Dev\tools\` 目录后通知 Agent 继续
+>
+> **cuDNN**: 新版 NVIDIA 提供的是 exe 安装包 (非 ZIP)，默认安装到 `C:\Program Files\NVIDIA\CUDNN\v9.23`。需将对应 CUDA 版本的 bin 目录（如 `C:\Program Files\NVIDIA\CUDNN\v9.23\bin\13.3\x64`）加入 PATH。
+>
+> **包冲突**：`aider-chat` 安装时会降级 `huggingface-hub` 到 1.4.1，导致 `transformers` 无法导入。需在安装 aider 后重新升级 `uv pip install "huggingface-hub>=1.21.0"`。
+>
+> **PowerShell 编码**：含中文的脚本块需注意编码问题。推荐验证脚本使用英文输出或确保 `-Encoding UTF8` 参数正确。
+>
+> **bitsandbytes / flash-attn / vLLM**: Windows 原生不支持，跳过安装。
+>
+> **OpenCode**: 此文档本身就是由 OpenCode 处理，无需额外安装 npm 包。
+>
+> **别名 'ai'**: 在 PowerShell Profile 中添加了 `Set-Alias -Name ai -Value "D:\AI_Dev\scripts\activate.ps1"`，后续可直接输入 `ai` 激活环境。
+
+---
+
 ## 阶段 0：前置检查与系统准备
 
 ### 0.1 确认系统信息
@@ -172,114 +194,69 @@ nvidia-smi
 ## 阶段 2：CUDA Toolkit 与 cuDNN
 
 > **RTX 5060 Ti (Blackwell 架构) 要求**: CUDA >= 12.8
-> **策略**: 安装 CUDA 12.8，cuDNN 9.x
+> **注意**: 实际系统可能已预装更新的 CUDA 版本（如 13.3），Agent 应先通过 `nvcc --version` 和 `nvidia-smi` 检查，若已安装则跳过。
 
-### 2.1 安装 CUDA Toolkit 12.8
+### 2.1 检查 CUDA 状态
 
 ```powershell
-# 下载 CUDA Toolkit 12.8 安装器
-$cudaUrl = "https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_561.17_windows.exe"
-$cudaInstaller = "$ENV:AI_DEV_ROOT\tools\cuda_12.8.0_installer.exe"
-
-Write-Host "正在下载 CUDA Toolkit 12.8.0 ..." -ForegroundColor Cyan
-Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller -UseBasicParsing
-Write-Host "下载完成，大小: $([math]::Round((Get-Item $cudaInstaller).Length/1MB, 1)) MB" -ForegroundColor Green
-
-# 静默安装（仅安装 CUDA Toolkit，不覆盖驱动）
-Write-Host "正在安装 CUDA Toolkit 12.8.0（静默安装，预计 5-10 分钟）..." -ForegroundColor Cyan
-Start-Process -FilePath $cudaInstaller -ArgumentList "-s", "toolkit" -Wait -NoNewWindow
-Write-Host "CUDA Toolkit 安装完成" -ForegroundColor Green
-
-# 清理安装包
-Remove-Item $cudaInstaller -Force -ErrorAction SilentlyContinue
+# 检查 CUDA Toolkit 是否已安装
+$nvccCheck = Get-Command nvcc -ErrorAction SilentlyContinue
+if ($nvccCheck) {
+    $cudaVer = nvcc --version | Select-String "release"
+    Write-Host "CUDA 已安装: $cudaVer" -ForegroundColor Green
+} else {
+    Write-Host "CUDA 未安装，开始下载安装..." -ForegroundColor Yellow
+    # 下载 CUDA Toolkit 12.8 安装器
+    $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_561.17_windows.exe"
+    $cudaInstaller = "$ENV:AI_DEV_ROOT\tools\cuda_12.8.0_installer.exe"
+    Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller -UseBasicParsing
+    Start-Process -FilePath $cudaInstaller -ArgumentList "-s", "toolkit" -Wait -NoNewWindow
+    Remove-Item $cudaInstaller -Force -ErrorAction SilentlyContinue
+}
 ```
 
-### 2.2 验证 CUDA 安装
+### 2.2 安装 cuDNN 9.x
+
+> **重要变更**: cuDNN 新版使用 exe 安装包（非 ZIP），默认安装到 `C:\Program Files\NVIDIA\CUDNN\v9.23`。
+> 下载需要 NVIDIA 开发者账号（免费注册）。
 
 ```powershell
-# 重新加载环境变量（安装程序修改了 PATH，需要刷新）
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-
-nvcc --version
-# 期望输出: Cuda compilation tools, release 12.8, V12.8.xx
-```
-
-### 2.3 安装 cuDNN 9.x
-
-> **注意**: cuDNN 需要 NVIDIA 开发者账号登录下载，此步骤需要手动操作或提供已下载的文件。
-
-```powershell
-# === 手动下载方式（推荐）===
-# 1. 访问 https://developer.nvidia.com/cudnn
-# 2. 登录 NVIDIA 开发者账号（免费注册）
-# 3. 下载 cuDNN v9.9.0 for CUDA 12.x -> ZIP Archive (Windows)
-# 4. 将下载的 zip 文件放到 D:\AI_Dev\tools\cudnn.zip
-# 然后执行下面的安装脚本：
-
-$cudnnZip = "$ENV:AI_DEV_ROOT\tools\cudnn.zip"
-
-if (Test-Path $cudnnZip) {
-    Write-Host "正在解压 cuDNN ..." -ForegroundColor Cyan
-    $cudnnTemp = "$ENV:AI_DEV_ROOT\tools\cudnn_temp"
-    Expand-Archive -Path $cudnnZip -DestinationPath $cudnnTemp -Force
-
-    # 查找解压后的 bin/include/lib 目录
-    $cudnnSubDir = Get-ChildItem -Path $cudnnTemp -Directory | Select-Object -First 1
-    $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
-
-    # 复制文件到 CUDA 目录
-    $srcBin = Join-Path $cudnnSubDir.FullName "bin"
-    $srcInclude = Join-Path $cudnnSubDir.FullName "include"
-    $srcLib = Join-Path $cudnnSubDir.FullName "lib"
-
-    if (Test-Path $srcBin) {
-        Copy-Item "$srcBin\*" "$cudaBase\bin\" -Force
-        Write-Host "cuDNN bin 文件已复制" -ForegroundColor Green
-    }
-    if (Test-Path $srcInclude) {
-        Copy-Item "$srcInclude\*" "$cudaBase\include\" -Force
-        Write-Host "cuDNN include 文件已复制" -ForegroundColor Green
-    }
-    if (Test-Path $srcLib) {
-        # cuDNN 9.x 的 lib 目录下可能有 x64 子目录
-        $libX64 = Join-Path $srcLib "x64"
-        if (Test-Path $libX64) {
-            Copy-Item "$libX64\*" "$cudaBase\lib\x64\" -Force
-        } else {
-            Copy-Item "$srcLib\*" "$cudaBase\lib\x64\" -Force
-        }
-        Write-Host "cuDNN lib 文件已复制" -ForegroundColor Green
-    }
-
-    # 清理
-    Remove-Item $cudnnTemp -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "cuDNN 安装完成" -ForegroundColor Green
+# === 检查 cuDNN 是否已安装 ===
+$cudnnDir = "C:\Program Files\NVIDIA\CUDNN"
+if (Test-Path $cudnnDir) {
+    Write-Host "cuDNN 已安装: $(Get-ChildItem $cudnnDir -Directory | Select-Object -First 1)" -ForegroundColor Green
 } else {
     Write-Host @"
-[手动操作 needed] cuDNN 文件未找到: $cudnnZip
-请执行以下操作：
-1. 访问 https://developer.nvidia.com/cudnn
-2. 登录并下载 cuDNN v9.x for CUDA 12.x (Windows ZIP)
-3. 将文件保存到: $cudnnZip
-4. 重新运行此脚本段
+[手动操作 needed] cuDNN 未安装，请执行以下操作：
+1. 访问 https://developer.nvidia.com/cudnn 下载安装包 exe
+2. 运行安装程序，使用默认路径
+3. 确认安装目录为: C:\Program Files\NVIDIA\CUDNN\v9.23
 "@ -ForegroundColor Yellow
+}
+
+# === 查找 cuDNN 并加入 PATH ===
+$cudaVer = (nvidia-smi | Select-String "CUDA Version").ToString()
+$cudaMajorMinor = if ($cudaVer -match '(\d+\.\d+)') { $Matches[1] } else { "13.3" }
+$cudnnBin = "C:\Program Files\NVIDIA\CUDNN\v9.23\bin\$cudaMajorMinor\x64"
+
+if (Test-Path $cudnnBin) {
+    $currentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if ($currentPath -notlike "*$cudnnBin*") {
+        [System.Environment]::SetEnvironmentVariable("Path", "$currentPath;$cudnnBin", "User")
+        $env:Path += ";$cudnnBin"
+        Write-Host "cuDNN 路径已添加到 PATH: $cudnnBin" -ForegroundColor Green
+    }
+} else {
+    Write-Host "[WARN] cuDNN 路径不存在: $cudnnBin，请确认 cuDNN 版本与 CUDA 版本匹配" -ForegroundColor Yellow
 }
 ```
 
-### 2.4 验证 cuDNN
+### 2.3 验证 cuDNN
 
 ```powershell
-# 检查关键 DLL 是否存在
-$cudaBin = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-$cudnnDlls = @("cudnn64_9.dll", "cudnn_ops_infer64_9.dll", "cudnn_cnn_infer64_9.dll")
-foreach ($dll in $cudnnDlls) {
-    $path = Join-Path $cudaBin $dll
-    if (Test-Path $path) {
-        Write-Host "[OK] $dll" -ForegroundColor Green
-    } else {
-        Write-Host "[MISSING] $dll" -ForegroundColor Red
-    }
-}
+# 通过 Python + PyTorch 验证 cuDNN（需要先安装 PyTorch，见阶段 4）
+python -c "import torch; print('cuDNN:', torch.backends.cudnn.is_available()); print('cuDNN ver:', torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else 'N/A')"
+# 期望输出: cuDNN: True, cuDNN ver: 9xxxx
 ```
 
 ---
@@ -374,66 +351,45 @@ Write-Host "pip 镜像源已配置为清华源" -ForegroundColor Green
 
 > **重要**: RTX 5060 Ti 需要 CUDA 12.8 支持的 PyTorch 版本。
 > 如果 PyTorch 官方尚未发布 CUDA 12.8 版本，使用 12.6 版本并配合新驱动通常也能兼容。
+> **下载注意事项**: PyTorch wheel (2.6GB) 下载可能超时，需设置 60-90 分钟超时，或指定精确版本减少解析时间。
 
 ```powershell
 # 确保在虚拟环境中
 # 先检查 PyTorch 官方最新的 CUDA 12 版本支持情况
-# 方案 A: CUDA 12.8 官方支持（如果已发布）
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
-# 方案 B: 如果上面报错 404，使用 CUDA 12.6（向后兼容）
+# 方案 A: CUDA 12.8（推荐，指定精确版本减少超时风险）
+uv pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+
+# 方案 B: 如果 cu128 不可用，使用 CUDA 12.6（向后兼容）
 # uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-Write-Host "PyTorch 安装完成" -ForegroundColor Green
+# 验证 CUDA 是否可用
+python -c "import torch; print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()} | GPU: {torch.cuda.get_device_name(0)}')"
+
+# **若下载超时**: 告知用户手动下载到 D:\AI_Dev\tools\ 目录后通知 Agent
+# cp312 + cu128 的 wheel 地址:
+# https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp312-cp312-win_amd64.whl
 ```
 
 ### 4.3 安装 AI/ML 核心库
 
+> **批量安装说明**: 为避免单次超时，建议分批安装。每批设置 10-20 分钟超时。
+
 ```powershell
-uv pip install `
-    numpy `
-    scipy `
-    pandas `
-    matplotlib `
-    seaborn `
-    scikit-learn `
-    jupyter `
-    jupyterlab `
-    ipywidgets `
-    transformers `
-    datasets `
-    accelerate `
-    sentencepiece `
-    tokenizers `
-    huggingface_hub `
-    safetensors `
-    bitsandbytes `
-    peft `
-    trl `
-    xformers `
-    flash-attn `
-    vllm `
-    openai `
-    anthropic `
-    google-generativeai `
-    langchain `
-    langchain-openai `
-    langchain-community `
-    chromadb `
-    faiss-cpu `
-    sentence-transformers `
-    pillow `
-    opencv-python `
-    tqdm `
-    rich `
-    typer `
-    httpx `
-    aiohttp `
-    python-dotenv `
-    pyyaml `
-    tomli `
-    watchdog `
-    pyperclip
+# 第1批: 科学计算与可视化
+uv pip install numpy scipy pandas matplotlib seaborn scikit-learn jupyter jupyterlab ipywidgets
+
+# 第2批: HuggingFace 生态
+uv pip install transformers datasets accelerate sentencepiece tokenizers huggingface_hub safetensors
+
+# 第3批: PEFT/LLM 库（bitsandbytes/flash-attn/vllm 在 Windows 上不兼容，跳过）
+uv pip install peft trl xformers openai anthropic google-generativeai langchain langchain-openai langchain-community
+
+# 第4批: 向量数据库与工具
+uv pip install chromadb faiss-cpu sentence-transformers pillow opencv-python aiohttp python-dotenv pyyaml tomli watchdog pyperclip
+
+# 第5批: Web/API 框架
+uv pip install fastapi uvicorn starlette pydantic requests flask gradio streamlit chainlit
 
 Write-Host "AI/ML 核心库安装完成" -ForegroundColor Green
 ```
@@ -462,17 +418,7 @@ Write-Host "Web/API 开发库安装完成" -ForegroundColor Green
 ### 4.5 安装代码质量与工具库
 
 ```powershell
-uv pip install `
-    ruff `
-    mypy `
-    pytest `
-    pytest-asyncio `
-    black `
-    isort `
-    pre-commit `
-    ipdb `
-    py-spy `
-    memray
+uv pip install ruff mypy pytest pytest-asyncio black isort pre-commit ipdb py-spy
 
 Write-Host "工具库安装完成" -ForegroundColor Green
 ```
@@ -503,63 +449,53 @@ Write-Host "VS Code 安装完成" -ForegroundColor Green
 
 ### 5.2 安装 Cursor（AI 代码编辑器 - Vibe Coding 核心）
 
-```powershell
-# Cursor 是基于 VS Code 的 AI 编辑器，Vibe Coding 的主力工具
-winget install Cursor.Cursor --accept-package-agreements --accept-source-agreements
+> **注意**: Winget 可能找不到 Cursor，且官网下载可能超时。推荐用户手动从 https://cursor.com 下载安装。
 
-# 如果 winget 没有 Cursor，使用以下备用方式：
-$cursorUrl = "https://downloader.cursor.sh/windows/nsis/x64"
-$cursorInstaller = "$ENV:AI_DEV_ROOT\tools\cursor_setup.exe"
-if (-not (Get-Command cursor -ErrorAction SilentlyContinue)) {
-    Invoke-WebRequest -Uri $cursorUrl -OutFile $cursorInstaller -UseBasicParsing
-    Start-Process -FilePath $cursorInstaller -Wait
-    Remove-Item $cursorInstaller -Force -ErrorAction SilentlyContinue
+```powershell
+# 检查 Cursor 是否已安装
+if (Get-Command cursor -ErrorAction SilentlyContinue) {
+    Write-Host "Cursor 已安装: $(cursor --version)" -ForegroundColor Green
+} else {
+    Write-Host "[手动操作] 请从 https://cursor.com/downloads 下载安装 Cursor" -ForegroundColor Yellow
 }
-Write-Host "Cursor 安装完成" -ForegroundColor Green
+
+# 安装后将 Cursor 加入 PATH
+$cursorBin = "$env:LOCALAPPDATA\Programs\Cursor\resources\app\bin"
+if (Test-Path $cursorBin) {
+    $currentPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if ($currentPath -notlike "*$cursorBin*") {
+        [System.Environment]::SetEnvironmentVariable("Path", "$currentPath;$cursorBin", "User")
+    }
+}
 ```
 
 ### 5.3 安装 VS Code / Cursor 扩展
 
+> **注意**: VS Code 安装后需刷新 PATH 才能使用 `code` 命令。扩展安装可能较慢，建议先安装关键扩展（Continue + Python）。
+
 ```powershell
-# 定义扩展列表
-$extensions = @(
-    # Python 开发
-    "ms-python.python",              # Python 官方扩展
-    "ms-python.vscode-pylance",      # 类型检查
-    "ms-python.debugpy",             # 调试器
-    "ms-python.black-formatter",     # 代码格式化
-    "charliermarsh.ruff",            # Ruff linting
-
-    # AI 辅助
-    "continue.continue",             # Continue - 开源 AI 编程助手
-    "ms-python.ai-robot",            # GitHub Copilot (可选)
-
-    # Jupyter
-    "ms-toolsai.jupyter",            # Jupyter Notebook 支持
-
-    # 通用工具
-    "esbenp.prettier-vscode",        # 格式化
-    "dbaeumer.vscode-eslint",        # JS linting
-    "streetsidesoftware.code-spell-checker",  # 拼写检查
-    "mkhl.direnv",                   # 环境变量管理
-    "tamasfe.even-better-toml",      # TOML 支持
-    "yzhang.markdown-all-in-one",    # Markdown 增强
-    "humao.rest-client",             # REST API 测试
-    "gruntfuggly.todo-tree",         # TODO 管理
-    "usernamehw.errorlens",          # 错误高亮
-)
-
-$codeCmd = "code"
-# 如果 Cursor 安装成功，也为其安装扩展
-$cursorCmd = "cursor"
-
-foreach ($ext in $extensions) {
-    Write-Host "安装扩展: $ext" -ForegroundColor DarkGray
-    & $codeCmd --install-extension $ext --force 2>$null
-    & $cursorCmd --install-extension $ext --force 2>$null
+# 确保 code 命令可用
+$codeBin = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin"
+if (Test-Path $codeBin -and ($env:Path -notlike "*$codeBin*")) {
+    $env:Path = "$codeBin;$env:Path"
 }
 
-Write-Host "IDE 扩展安装完成" -ForegroundColor Green
+# 关键扩展（先安装）
+$criticalExts = @(
+    "continue.continue",   # 开源 AI 编程助手（Vibe Coding 核心）
+    "ms-python.python"     # Python 官方支持
+)
+foreach ($ext in $criticalExts) {
+    Write-Host "安装扩展: $ext" -ForegroundColor DarkGray
+    & code --install-extension $ext --force 2>$null
+}
+
+# 可选扩展（用户可后续在 IDE 中自行安装）
+# ms-python.vscode-pylance / ms-python.debugpy / charliermarsh.ruff
+# ms-toolsai.jupyter / esbenp.prettier-vscode / streetsidesoftware.code-spell-checker
+# tamasfe.even-better-toml / yzhang.markdown-all-in-one / gruntfuggly.todo-tree
+
+Write-Host "IDE 扩展(关键)安装完成" -ForegroundColor Green
 ```
 
 ### 5.4 创建 VS Code / Cursor 工作区配置
@@ -623,11 +559,23 @@ Write-Host "IDE 配置完成" -ForegroundColor Green
 
 ### 6.1 安装 Ollama
 
-```powershell
-winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements
+> **注意**: Winget 下载 OllamaSetup.exe (1.32GB) 可能超时。推荐用户手动从 https://ollama.com/download/windows 下载安装。
 
-# 刷新 PATH
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+```powershell
+# 检查是否已安装
+if (Get-Command ollama -ErrorAction SilentlyContinue) {
+    Write-Host "Ollama 已安装: $(ollama --version)" -ForegroundColor Green
+} else {
+    Write-Host "[手动操作] 请从 https://ollama.com/download/windows 下载安装 Ollama" -ForegroundColor Yellow
+    Write-Host "或使用 winget 下载（耗时较长，需设置 30 分钟以上超时）:"
+    Write-Host "  winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements"
+}
+
+# 添加到 PATH
+$ollamaBin = "$env:LOCALAPPDATA\Programs\Ollama"
+if (Test-Path $ollamaBin -and ($env:Path -notlike "*$ollamaBin*")) {
+    $env:Path = "$ollamaBin;$env:Path"
+}
 ```
 
 ### 6.2 配置 Ollama 模型存储路径
@@ -749,31 +697,21 @@ Write-Host "Continue 插件配置完成" -ForegroundColor Green
 
 ## 阶段 7：CLI AI 工具
 
-### 7.1 安装 OpenCode
+### 7.1 OpenCode（本环境使用的 AI Agent）
+
+OpenCode（anomalyco/opencode）已通过 Git 克隆并构建，无需额外安装。执行以下命令从源码构建：
 
 ```powershell
-# 需要 Node.js 环境
-winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
-
-# 刷新 PATH
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-
-# 安装 Open Code
-npm install -g @anthropic-ai/Open-code
-
-Write-Host "Open Code 安装完成" -ForegroundColor Green
-# 使用方式: 在项目目录运行 Open
-# 需要 ANTHROPIC_API_KEY 环境变量
+# 已在此环境中运行，无需重复安装
+# 若需更新: git pull && cd packages/opencode && npm run build
 ```
 
-### 7.2 安装 Gemini CLI（Google 官方）
+### 7.2 安装 Gemini CLI（Google 官方，可选）
 
 ```powershell
-npm install -g @anthropic-ai/Open-code 2>$null
+# 可选，需要时运行
 npm install -g @google/gemini-cli 2>$null
-
 Write-Host "Gemini CLI 安装完成" -ForegroundColor Green
-# 使用方式: 在项目目录运行 gemini
 ```
 
 ### 7.3 安装 aider（AI 结对编程 CLI）
@@ -781,8 +719,10 @@ Write-Host "Gemini CLI 安装完成" -ForegroundColor Green
 ```powershell
 uv pip install aider-chat
 
+# 注意: aider 会降级 huggingface-hub 到 1.4.1，需重新升级
+uv pip install "huggingface-hub>=1.21.0"
+
 Write-Host "aider 安装完成" -ForegroundColor Green
-# aider 可以连接本地 Ollama 模型
 # 使用方式: aider --model ollama/qwen3:8b
 ```
 
@@ -1015,148 +955,105 @@ Write-Host "项目模板创建完成: $demoProject" -ForegroundColor Green
 ### 10.1 创建并运行完整验证
 
 ```powershell
-$verifyScript = @'
+# 验证脚本写入文件而非 PowerShell here-string（避免编码问题）
+$verifyScript = @"
 Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "   AI Vibe Coding 环境验证报告" -ForegroundColor Cyan
+Write-Host "   AI Vibe Coding Environment Report" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
-$errors = 0
-$warnings = 0
+`$errors = 0
+`$warnings = 0
 
 function Check-Command {
-    param([string]$Name, [string]$Command, [string]$ExpectedPattern)
+    param([string]`$Name, [string]`$Command, [string]`$ExpectedPattern)
     try {
-        $output = & (Get-Command $Command -ErrorAction Stop) 2>&1
-        if ($ExpectedPattern -and ($output -notmatch $ExpectedPattern)) {
-            Write-Host "  [WARN] $Name - 版本可能不符合预期" -ForegroundColor Yellow
-            Write-Host "         输出: $output" -ForegroundColor DarkGray
-            $script:warnings++
+        `$output = & (Get-Command `$Command -ErrorAction Stop) 2>&1
+        if (`$ExpectedPattern -and (`$output -notmatch `$ExpectedPattern)) {
+            Write-Host "  [WARN] `$Name - version mismatch" -ForegroundColor Yellow
+            `$script:warnings++
         } else {
-            $version = if ($output -match '(\d+\.\d+[\.\d]*)') { $Matches[1] } else { "OK" }
-            Write-Host "  [OK]   $Name - v$version" -ForegroundColor Green
+            `$version = if (`$output -match '(\d+\.\d+[\.\d]*)') { `$Matches[1] } else { "OK" }
+            Write-Host "  [OK]   `$Name - v`$version" -ForegroundColor Green
         }
     } catch {
-        Write-Host "  [FAIL] $Name - 未找到" -ForegroundColor Red
-        $script:errors++
-    }
-}
-
-function Check-File {
-    param([string]$Name, [string]$Path)
-    if (Test-Path $Path) {
-        $size = [math]::Round((Get-Item $Path).Length/1MB, 1)
-        Write-Host "  [OK]   $Name - ${size}MB" -ForegroundColor Green
-    } else {
-        Write-Host "  [FAIL] $Name - $Path 不存在" -ForegroundColor Red
-        $script:errors++
+        Write-Host "  [FAIL] `$Name - not found" -ForegroundColor Red
+        `$script:errors++
     }
 }
 
 function Check-Dir {
-    param([string]$Name, [string]$Path)
-    if (Test-Path $Path) {
-        Write-Host "  [OK]   $Name - $Path" -ForegroundColor Green
+    param([string]`$Name, [string]`$Path)
+    if (Test-Path `$Path) {
+        Write-Host "  [OK]   `$Name - `$Path" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] $Name - $Path 不存在" -ForegroundColor Red
-        $script:errors++
+        Write-Host "  [FAIL] `$Name - not found" -ForegroundColor Red
+        `$script:errors++
     }
 }
 
-# --- 系统基础 ---
-Write-Host "--- 系统基础 ---" -ForegroundColor White
-Check-Command "NVIDIA 驱动" "nvidia-smi" "Driver Version"
-Check-Command "Git" "git" "git version"
+# --- System ---
+Write-Host "--- System ---" -ForegroundColor White
+Check-Command "nvidia-smi" "nvidia-smi" "."
+Check-Command "Git" "git" "."
 Check-Command "Node.js" "node" "v\d+"
-Check-Command "npm" "npm" "\d+\.\d+"
-
-# --- CUDA 工具链 ---
-Write-Host "`n--- CUDA 工具链 ---" -ForegroundColor White
-Check-Command "NVCC (CUDA Compiler)" "nvcc" "12\.8"
-$cudaBin = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin"
-Check-File "cuDNN DLL" "$cudaBin\cudnn64_9.dll"
-
-# --- Python 环境 ---
-Write-Host "`n--- Python 环境 ---" -ForegroundColor White
-Check-Command "Python" "python" "3\.12"
 Check-Command "uv" "uv" "\d+\.\d+"
-Check-Command "pip" "pip" "\d+\.\d+"
-Check-Command "conda" "conda" "\d+\.\d+"
 
-# --- AI/ML 核心 ---
-Write-Host "`n--- AI/ML 核心库 ---" -ForegroundColor White
-Check-Command "PyTorch" "python" ""  # 特殊处理
+# --- CUDA ---
+Write-Host "`n--- CUDA ---" -ForegroundColor White
+Check-Command "nvcc" "nvcc" "\d+\.\d+"
+
+# --- Python ---
+Write-Host "`n--- Python ---" -ForegroundColor White
+`$mainEnv = "D:\AI_Dev\projects\main-env"
+if (Test-Path "`$mainEnv\Scripts\python.exe") {
+    `$ver = & "`$mainEnv\Scripts\python.exe" --version
+    Write-Host "  [OK]   Main venv - `$ver" -ForegroundColor Green
+} else { Write-Host "  [FAIL] Main venv" -ForegroundColor Red; `$script:errors++ }
+
+# --- PyTorch (via .py file to avoid escaping issues) ---
+Write-Host "`n--- PyTorch ---" -ForegroundColor White
 try {
-    $torchOutput = python -c "import torch; print(f'{torch.__version__}|{torch.cuda.is_available()}|{torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
-    $parts = $torchOutput -split '\|'
-    $torchVer = $parts[0]
-    $cudaAvail = $parts[1]
-    $gpuName = $parts[2]
-    if ($cudaAvail -eq "True") {
-        Write-Host "  [OK]   PyTorch $torchVer - CUDA 可用 - $gpuName" -ForegroundColor Green
-    } else {
-        Write-Host "  [WARN] PyTorch $torchVer - CUDA 不可用！" -ForegroundColor Yellow
-        $script:warnings++
-    }
-} catch {
-    Write-Host "  [FAIL] PyTorch - 导入失败: $_" -ForegroundColor Red
-    $script:errors++
-}
+    `$torchScript = "D:\AI_Dev\scripts\check_torch.py"
+    @'
+import torch
+print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()} | GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"}')
+print(f'cuDNN: {torch.backends.cudnn.is_available()} | cuDNN ver: {torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else "N/A"}')
+'@ | Set-Content -Path `$torchScript -Encoding UTF8
+    & "`$mainEnv\Scripts\python.exe" `$torchScript
+} catch { Write-Host "  [FAIL] PyTorch check" -ForegroundColor Red; `$script:errors++ }
 
-Check-Command "Transformers" "python" ""
+# --- Libraries ---
+Write-Host "`n--- Core Libraries ---" -ForegroundColor White
+try { & "`$mainEnv\Scripts\python.exe" -c "import transformers, datasets, accelerate, langchain, fastapi, gradio, cv2; print('All core libs OK')" }
+catch { Write-Host "  [WARN] Some libs failed" -ForegroundColor Yellow; `$script:warnings++ }
+
+# --- Ollama ---
+Write-Host "`n--- Local LLM ---" -ForegroundColor White
+Check-Command "Ollama" "ollama" "."
 try {
-    $hfVer = python -c "import transformers; print(transformers.__version__)"
-    Write-Host "  [OK]   Transformers $hfVer" -ForegroundColor Green
-} catch { Write-Host "  [FAIL] Transformers" -ForegroundColor Red; $script:errors++ }
+    `$models = ollama list 2>&1
+    if (`$models -match "NAME") { Write-Host "  [OK]   Ollama running" -ForegroundColor Green }
+    else { Write-Host "  [WARN] No models pulled" -ForegroundColor Yellow; `$script:warnings++ }
+} catch { Write-Host "  [WARN] Ollama not running" -ForegroundColor Yellow; `$script:warnings++ }
 
-Check-Command "vLLM" "python" ""
-try {
-    python -c "import vllm; print('OK')" 2>$null
-    Write-Host "  [OK]   vLLM" -ForegroundColor Green
-} catch { Write-Host "  [WARN] vLLM - 导入失败（Windows 上可能需要 WSL）" -ForegroundColor Yellow; $script:warnings++ }
-
-# --- 本地 LLM ---
-Write-Host "`n--- 本地 LLM ---" -ForegroundColor White
-Check-Command "Ollama" "ollama" "ollama version"
-try {
-    $models = ollama list 2>&1
-    $modelCount = ($models | Select-String "qwen|deepseek|coder").Count
-    if ($modelCount -gt 0) {
-        Write-Host "  [OK]   已拉取 $modelCount 个 AI 模型" -ForegroundColor Green
-    } else {
-        Write-Host "  [WARN] 未检测到 AI 模型" -ForegroundColor Yellow
-        $script:warnings++
-    }
-} catch { Write-Host "  [WARN] Ollama 服务可能未运行" -ForegroundColor Yellow; $script:warnings++ }
-
-# --- IDE & 工具 ---
-Write-Host "`n--- IDE & 工具 ---" -ForegroundColor White
+# --- IDE ---
+Write-Host "`n--- IDE ---" -ForegroundColor White
 Check-Command "VS Code" "code" ""
 Check-Command "Cursor" "cursor" ""
-Check-Command "Open Code" "Open" ""
-try { npm list -g @anthropic-ai/Open-code 2>$null | Out-Null; Write-Host "  [OK]   Open Code CLI" -ForegroundColor Green }
-catch { Write-Host "  [WARN] Open Code CLI" -ForegroundColor Yellow; $script:warnings++ }
-
 Check-Command "aider" "aider" ""
 
-# --- 目录结构 ---
-Write-Host "`n--- 目录结构 ---" -ForegroundColor White
-Check-Dir "AI 开发根目录" "D:\AI_Dev"
-Check-Dir "项目目录" "D:\AI_Dev\projects"
-Check-Dir "模型缓存" "D:\AI_Dev\cache\huggingface"
-Check-Dir "Ollama 模型" "D:\AI_Dev\models\ollama"
-Check-Dir "主虚拟环境" "D:\AI_Dev\projects\main-env"
+# --- Directories ---
+Write-Host "`n--- Directories ---" -ForegroundColor White
+Check-Dir "AI_DEV_ROOT" "D:\AI_Dev"
+Check-Dir "Projects" "D:\AI_Dev\projects"
+Check-Dir "Main Venv" "D:\AI_Dev\projects\main-env"
 
-# --- 总结 ---
+# --- Summary ---
 Write-Host "`n========================================" -ForegroundColor Cyan
-if ($errors -eq 0 -and $warnings -eq 0) {
-    Write-Host "   全部通过! 环境配置完美! " -ForegroundColor Green
-} elseif ($errors -eq 0) {
-    Write-Host "   基本就绪 ($warnings 个警告)" -ForegroundColor Yellow
-} else {
-    Write-Host "   存在问题 ($errors 个错误, $warnings 个警告)" -ForegroundColor Red
-}
+if (`$errors -eq 0) { Write-Host "   Ready! (`$warnings warnings)" -ForegroundColor Green }
+else { Write-Host "   Issues: `$errors errors, `$warnings warnings" -ForegroundColor Red }
 Write-Host "========================================`n" -ForegroundColor Cyan
-'@
+"@
 
 $verifyPath = "$ENV:AI_DEV_ROOT\scripts\verify_env.ps1"
 Set-Content -Path $verifyPath -Value $verifyScript -Encoding UTF8
@@ -1181,6 +1078,17 @@ Write-Host "`n  Activating AI Dev Environment..." -ForegroundColor Cyan
 
 # 刷新 PATH
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+# 确保工具路径在 PATH 中
+$extraPaths = @(
+    "C:\Program Files\NVIDIA\CUDNN\v9.23\bin\13.3\x64",
+    "$env:LOCALAPPDATA\Programs\Cursor\resources\app\bin",
+    "$env:LOCALAPPDATA\Programs\Ollama",
+    "$env:LOCALAPPDATA\Programs\Microsoft VS Code\bin"
+)
+foreach ($p in $extraPaths) {
+    if (Test-Path $p -and $env:Path -notlike "*$p*") { $env:Path = "$p;$env:Path" }
+}
 
 # 设置环境变量
 $ENV:AI_DEV_ROOT = "D:\AI_Dev"
@@ -1214,6 +1122,17 @@ Write-Host "  Shortcuts: ai-gpu | ai-models | ai-list | ai-verify | ai-note | ai
 
 Set-Content -Path "$ENV:AI_DEV_ROOT\scripts\activate.ps1" -Value $activateScript -Encoding UTF8
 Write-Host "激活脚本创建完成: $ENV:AI_DEV_ROOT\scripts\activate.ps1" -ForegroundColor Green
+
+# 在 PowerShell Profile 中添加别名 'ai'
+$aliasEntry = @"
+
+# === AI Dev Environment ===
+Set-Alias -Name ai -Value "D:\AI_Dev\scripts\activate.ps1" -ErrorAction SilentlyContinue
+"@
+if (-not (Select-String -Path $PROFILE -Pattern "Set-Alias.*ai.*activate" -Quiet -ErrorAction SilentlyContinue)) {
+    Add-Content -Path $PROFILE -Value $aliasEntry -Encoding UTF8
+    Write-Host "别名 'ai' 已添加到 PowerShell Profile" -ForegroundColor Green
+}
 ```
 
 ### 11.2 创建 PowerShell Profile 自动加载（可选）
@@ -1280,20 +1199,20 @@ Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 
 | 组件 | 版本/路径 | 用途 |
 |------|-----------|------|
-| NVIDIA 驱动 | >= 570.xx | GPU 基础驱动 |
-| CUDA Toolkit | 12.8 | GPU 编译工具链 |
-| cuDNN | 9.x | 深度学习加速库 |
-| Python | 3.12.x | 主力开发语言 |
-| uv | latest | 极速包管理器 |
-| Miniconda | latest | 备选环境管理 |
-| PyTorch | 2.x (CUDA 12.x) | 深度学习框架 |
-| Transformers | 4.x | Hugging Face 模型库 |
-| Ollama | latest | 本地 LLM 运行时 |
-| Cursor | latest | AI 代码编辑器 (主力) |
-| VS Code | latest | 通用代码编辑器 |
-| Continue | latest | 开源 AI 编程助手插件 |
-| Open Code | latest | Anthropic CLI 编程工具 |
-| aider | latest | AI 结对编程 CLI |
+| NVIDIA 驱动 | 610.62 (>= 570.xx) | GPU 基础驱动 |
+| CUDA Toolkit | 13.3 (nvcc) | GPU 编译工具链 |
+| cuDNN | v9.23 | 深度学习加速库 |
+| Python (venv) | 3.12.13 (D:\AI_Dev\projects\main-env) | 主力开发语言 |
+| uv | 0.11.25 | 极速包管理器 |
+| Miniconda | 26.3.2 (D:\AI_Dev\miniconda3) | 备选环境管理 |
+| PyTorch | 2.11.0+cu128 (CUDA 可用) | 深度学习框架 |
+| Transformers | 5.12.1 | Hugging Face 模型库 |
+| Ollama | 0.30.11 | 本地 LLM 运行时 |
+| Cursor | 3.9.8 | AI 代码编辑器 (主力) |
+| VS Code | 1.126.0 | 通用代码编辑器 |
+| Continue | 2.0.0 | 开源 AI 编程助手插件 |
+| OpenCode | anomalyco/opencode (dev) | AI Agent (本环境驱动) |
+| aider | 0.86.2 | AI 结对编程 CLI |
 
 ---
 
@@ -1301,7 +1220,9 @@ Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 
 ```markdown
 ### 启动开发环境
-  . D:\AI_Dev\scripts\activate.ps1
+  ai                                       # 别名（推荐）
+  # 或
+  . D:\AI_Dev\scripts\activate.ps1        # 完整路径
 
 ### 新建项目
   cd D:\AI_Dev\projects
@@ -1335,7 +1256,7 @@ Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 
 ---
 
-*文档版本: 1.0 | 生成时间: 2025-07-11 | 适用 GPU: NVIDIA RTX 5060 Ti 16GB*
+*文档版本: 1.1 | 生成时间: 2025-07-11 | 最后实际部署: 2026-06-27 | 适用 GPU: NVIDIA RTX 5060 Ti 16GB*
 ```
 
 ---
@@ -1353,3 +1274,11 @@ Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 **Vibe Coding 工具链覆盖**：Cursor（主力编辑器）+ Continue（开源 AI 插件，已预配本地模型）+ Ollama（本地 LLM）+ Open Code + aider，形成从 GUI 到 CLI 的完整 AI 辅助编程矩阵。模型选择上，Qwen3 8B 和 DeepSeek-Coder-V2 在 16GB 显存上可以流畅运行，中文编程场景效果很好。
 
 **实际执行时的注意点**：阶段 2.3（cuDNN）需要手动下载，文档中已经明确标注了 `[手动操作 needed]`，Agent 执行到这里应该暂停并报告。阶段 6.3 的模型拉取每个几个 GB，Agent 应该告知用户预计时间和磁盘空间。
+
+**实际部署经验 (2026-06-27)**：
+- **大文件下载**：PyTorch (2.6GB) 和 Ollama (1.32GB) 极易超时。PyTorch 建议指定精确版本 `torch==2.11.0+cu128` 减少解析耗时，并设置 90 分钟超时。Ollama 和 Cursor 建议提示用户手动下载。
+- **cuDNN 安装方式变更**：2025-2026 年的 cuDNN 改为 exe 安装包，安装到 `C:\Program Files\NVIDIA\CUDNN\v9.23`。Agent 需根据 CUDA 版本选择对应的 bin 子目录（如 `13.3\x64`）并加入 PATH。
+- **包冲突**：`aider-chat` 安装后会降级 `huggingface-hub` 到 1.4.1（`transformers` 需要 >= 1.21.0），需在 aider 之后重新升级。建议 Agent 在安装完所有包后执行一次 `uv pip install "huggingface-hub>=1.21.0"`。
+- **PowerShell 编码**：含中文的 heredoc (`@''@`) 在 PowerShell 中可能存在编码问题。推荐验证脚本使用英文输出或写入 .ps1 文件执行。
+- **Windows 不兼容包**：`bitsandbytes`、`flash-attn`、`vLLM` 在 Windows 上无法安装，应跳过并告知用户可在 WSL2 中使用。
+- **vs code 扩展安装**：逐个安装所有扩展耗时较大，建议只安装关键扩展 `continue.continue` + `ms-python.python`，其余让用户在 IDE 中自行安装。
