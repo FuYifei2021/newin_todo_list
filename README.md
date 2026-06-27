@@ -70,7 +70,7 @@ npm run build
 ```
 
 ## 以下部分提供给AI Agents阅读并实施：
-```markdown
+
 # Windows 11 AI Vibe Coding 环境配置手册
 
 > **目标读者**: AI Agent（可直接按步骤顺序执行）
