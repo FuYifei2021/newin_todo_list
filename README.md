@@ -83,7 +83,8 @@ npm run build
 >
 > **系统预装情况**：NVIDIA 驱动 610.62 / CUDA 13.3 (nvcc) / cuDNN v9.23 已预装，均高于指南最低要求，无需重复安装。
 >
-> **大文件下载超时**：PyTorch wheel (2.6GB) 和 Ollama 安装包 (1.32GB) 通过 `winget` / `uv` 下载均会因超时失败。解决方案：
+> **大文件下载**：PyTorch wheel (2.6GB) 和 Ollama 安装包 (1.32GB) 通过 `winget` / `uv` 下载均会因超时失败。解决方案：
+> - 先去各应用分区的download、temp目录查找是否有已经缓存的安装包，再去系统分区查缓存目录，找不到的时候再去网络下载。
 > - PyTorch: 使用 `uv pip install` 配合 `--timeout 5400000` (90分钟超时)，或指定精确版本 `torch==2.11.0+cu128` 减少解析时间
 > - 通用方案: 提示用户手动下载到 `D:\AI_Dev\tools\` 目录后通知 Agent 继续
 >
@@ -206,7 +207,7 @@ if ($nvccCheck) {
     Write-Host "CUDA 已安装: $cudaVer" -ForegroundColor Green
 } else {
     Write-Host "CUDA 未安装，开始下载安装..." -ForegroundColor Yellow
-    # 下载 CUDA Toolkit 12.8 安装器
+    # 下载 CUDA Toolkit 12.8 安装器，下载前确认目标缓存文件是否已经下载，可能在前面提到的缓存目录或者目标路径，文件可能保存为*.tmp格式
     $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_561.17_windows.exe"
     $cudaInstaller = "$ENV:AI_DEV_ROOT\tools\cuda_12.8.0_installer.exe"
     Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller -UseBasicParsing
@@ -443,8 +444,16 @@ Write-Host "Hugging Face 缓存目录已配置" -ForegroundColor Green
 ### 5.1 安装 VS Code
 
 ```powershell
-winget install Microsoft.VisualStudioCode --accept-package-agreements --accept-source-agreements
-Write-Host "VS Code 安装完成" -ForegroundColor Green
+$codeCheck = Get-Command code -ErrorAction SilentlyContinue
+if ($codeCheck) {
+    $Ver = code --version | Select-String "release"
+    Write-Host "VS Code 已安装: $Ver" -ForegroundColor Green
+} else {
+    Write-Host "VS Code 未安装，开始下载安装..." -ForegroundColor Yellow
+    winget install Microsoft.VisualStudioCode --accept-package-agreements --accept-source-agreements
+    Write-Host "VS Code 安装完成" -ForegroundColor Green
+}
+
 ```
 
 ### 5.2 安装 Cursor（AI 代码编辑器 - Vibe Coding 核心）
@@ -559,7 +568,7 @@ Write-Host "IDE 配置完成" -ForegroundColor Green
 
 ### 6.1 安装 Ollama
 
-> **注意**: Winget 下载 OllamaSetup.exe (1.32GB) 可能超时。推荐用户手动从 https://ollama.com/download/windows 下载安装。
+> **注意**: Winget 下载 OllamaSetup.exe (1.32GB) 可能超时，参考前面**大文件下载**的说明。
 
 ```powershell
 # 检查是否已安装
@@ -588,7 +597,7 @@ New-Item -ItemType Directory -Path "$ENV:AI_DEV_ROOT\models\ollama" -Force | Out
 Write-Host "Ollama 模型目录已配置" -ForegroundColor Green
 ```
 
-### 6.3 拉取推荐模型
+### 6.3 拉取推荐模型（本节暂不实施）
 
 > **注意**: 以下模型选择基于 16GB 显存的优化配置。
 > Qwen3 系列和 DeepSeek 系列对 Vibe Coding 效果极好。
@@ -837,7 +846,7 @@ Write-Host "全局 .gitignore 配置完成" -ForegroundColor Green
 
 ```powershell
 $demoProject = "$ENV:AI_DEV_ROOT\projects\demo-vibe-project"
-New-Item -ItemType Directory -Path $demoProject -Force | Out-Null
+New-Item -ItemType Directory -Path $demoProject | Out-Null
 
 $projectDirs = @(
     "$demoProject\src",
@@ -851,7 +860,7 @@ $projectDirs = @(
     "$demoProject\output"
 )
 foreach ($d in $projectDirs) {
-    New-Item -ItemType Directory -Path $d -Force | Out-Null
+    New-Item -ItemType Directory -Path $d | Out-Null
 }
 ```
 
