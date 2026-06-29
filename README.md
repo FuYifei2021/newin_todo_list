@@ -191,7 +191,7 @@ nvidia-smi
 
 ---
 
-## 阶段 2：CUDA Toolkit 与 cuDNN
+## 阶段 2：安装VS、CUDA Toolkit 与 cuDNN
 
 > **RTX 5060 Ti (Blackwell 架构) 要求**: CUDA >= 12.8
 > **注意**: 实际系统可能已预装更新的 CUDA 版本（如 13.3），Agent 应先通过 `nvcc --version` 和 `nvidia-smi` 检查，若已安装则跳过。
