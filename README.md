@@ -1,12 +1,16 @@
+# Windows 11 AI Vibe Coding 环境配置手册
 
-# 如果系统是Windows 11，安装指南如下：
-
-## 首先是人工准备阶段、部署一个AI Agent、这里选择OpenCode、人类读者可以换自己喜欢的
-### precondition 1. 检查网络条件，安装过程需要访问github.com，部分地区没有条件的话，考虑从gitee.com或者gitcode.com寻找镜像项目。
-### precondition 2. 安装git
+## 人工准备阶段：部署 AI Agent（OpenCode）
+### 前置条件 1： 检查网络条件，安装过程需要访问github.com，部分地区没有条件的话，考虑从gitee.com或者gitcode.com寻找镜像项目。
+### 前置条件 2： 安装git
 #### 方式一: 通过winget安装
 ```powershell
-winget install Git.Git --accept-package-agreements --accept-source-agreements
+# 检查 Git 是否已安装
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    Write-Host "Git 已安装: $(git --version)" -ForegroundColor Green
+} else {
+    winget install Git.Git --accept-package-agreements --accept-source-agreements
+}
 ```
 #### 方式二: 网页访问https://git-scm.com下载安装包,双击安装，过程中只用修改一个地方
 ```text
@@ -21,9 +25,9 @@ winget install Git.Git --accept-package-agreements --accept-source-agreements
 git --version
 where git
 #预期
-C:\Users\linzh>where git
+C:\Users\你的用户名>where git
   C:\Program Files\Git\cmd\git.exe
-C:\Users\linzh>
+C:\Users\你的用户名>
 #若提示无法找到，则手动添加
 $gitPath = "C:\Program Files\Git\cmd"
 $currentPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -33,25 +37,43 @@ if ($currentPath -notlike "*$gitPath*") {
     Write-Host "已添加到 PATH" -ForegroundColor Green
 }
 ```
-### precondition 3. 安装node、wsl
+### 前置条件 3： 安装node、wsl
 ```powershell
-winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
-wsl.exe --list --online
-wsl.exe --install <Distro>
+# 检查 Node.js 是否已安装
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    Write-Host "Node.js 已安装: $(node --version)" -ForegroundColor Green
+} else {
+    winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+}
+
+# 检查 WSL 是否已安装
+$wslCheck = wsl.exe --status 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "WSL 已可用" -ForegroundColor Green
+    wsl.exe --list --online
+    Write-Host "[INFO] 如需安装新发行版: wsl.exe --install <Distro>" -ForegroundColor DarkGray
+} else {
+    wsl.exe --list --online
+    wsl.exe --install <Distro>
+}
 ```
-### precondition 4. 下载OpenCode: 从代码托管平台搜索OpenCode代码仓库，这里使用git@github.com:anomalyco/opencode.git
+### 前置条件 4： 下载OpenCode: 从代码托管平台搜索OpenCode代码仓库，这里使用git@github.com:anomalyco/opencode.git
 ```powershell
-#生成SSH key
-C:\Users\linzh>ssh-keygen
+#生成SSH key（如果不存在）
+if (-not (Test-Path "$env:USERPROFILE\.ssh\id_ed25519.pub")) {
+    C:\Users\你的用户名>ssh-keygen -t ed25519 -N '""' -f "$env:USERPROFILE\.ssh\id_ed25519"
+}
 #然后一路回车，完成后
-C:\Users\linzh>type .ssh\id_ed*.pub
+C:\Users\你的用户名>type .ssh\id_ed25519.pub
 #拷贝终端显示出来的字符串，用于设置代码托管平台的用户SSH key
 
-#新建目标文件夹
-C:\users\linzh>makedir works
-C:\users\linzh>cd works
-#暂时浅克隆
-C:\Users\linzh\works>git clone --depth=1 -b dev git@github.com:anomalyco/opencode.git opencode-dev
+#新建目标文件夹（如果不存在）
+if (-not (Test-Path "works")) { mkdir works }
+C:\Users\你的用户名>cd works
+#暂时浅克隆（如果尚未克隆）
+if (-not (Test-Path "opencode-dev")) {
+    C:\Users\你的用户名\works>git clone --depth=1 -b dev git@github.com:anomalyco/opencode.git opencode-dev
+}
 #后面要补全的话
 # 第一步：取消"只跟踪 master"的限制，让 git 知道远程还有其他分支
 git remote set-branches origin '*'
@@ -59,7 +81,7 @@ git remote set-branches origin '*'
 # 第二步：拉取完整历史 + 所有分支
 git fetch --unshallow --all
 
-C:\Users\linzh\works>cd opencode-dev\packages\opencode
+C:\Users\你的用户名\works>cd opencode-dev\packages\opencode
 #进入WSL,安装依赖包并构建
 wsl
 
@@ -69,9 +91,7 @@ npm run build
 #以后便可以在Terminal通过opencode命令打开，初次使用时会引导用户进行配置API
 ```
 
-## 以下部分提供给AI Agents阅读并实施：
-
-# Windows 11 AI Vibe Coding 环境配置手册
+---
 
 > **目标读者**: AI Agent（可直接按步骤顺序执行）
 > **系统环境**: Windows 11 64bit | 64GB RAM | NVIDIA RTX 5060 Ti 16GB
@@ -124,8 +144,14 @@ Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{N='Free(GB)';E={[math]
 ### 0.2 配置 PowerShell 执行策略
 
 ```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-Write-Host "执行策略已设置" -ForegroundColor Green
+# 检查当前执行策略，仅在需要时修改
+$currentPolicy = Get-ExecutionPolicy -Scope CurrentUser
+if ($currentPolicy -ne "RemoteSigned") {
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Write-Host "执行策略已设置为 RemoteSigned" -ForegroundColor Green
+} else {
+    Write-Host "执行策略已是 RemoteSigned，无需修改" -ForegroundColor Green
+}
 ```
 
 ### 0.3 设置环境变量（后续步骤依赖）
@@ -136,7 +162,7 @@ $ENV:AI_DEV_ROOT = "D:\AI_Dev"
 $ENV:CONDA_DIR = "D:\AI_Dev\miniconda3"
 $ENV:UV_DIR = "D:\AI_Dev\uv"
 
-# 创建目录结构
+# 创建目录结构（仅创建不存在的目录）
 $dirs = @(
     "$ENV:AI_DEV_ROOT",
     "$ENV:AI_DEV_ROOT\projects",
@@ -146,7 +172,10 @@ $dirs = @(
     "$ENV:AI_DEV_ROOT\scripts"
 )
 foreach ($d in $dirs) {
-    New-Item -ItemType Directory -Path $d -Force | Out-Null
+    if (-not (Test-Path $d)) {
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+        Write-Host "  创建目录: $d" -ForegroundColor DarkGray
+    }
 }
 Write-Host "目录结构创建完成: $ENV:AI_DEV_ROOT" -ForegroundColor Green
 ```
@@ -172,13 +201,16 @@ if ($LASTEXITCODE -eq 0) {
 > **注意**: 此步骤可能需要手动下载。RTX 5060 Ti 需要 >= 570.xx 版本驱动。
 
 ```powershell
-# 方法 A: 使用 winget 尝试安装（如果可用）
-winget install NVIDIA.Driver --accept-package-agreements --accept-source-agreements
+# 如果阶段 1.1 已确认驱动可用，跳过此步骤
+if ($LASTEXITCODE -ne 0) {
+    # 方法 A: 使用 winget 尝试安装（如果可用）
+    winget install NVIDIA.Driver --accept-package-agreements --accept-source-agreements
 
-# 方法 B: 如果 winget 不可用或版本不够新，手动下载
-# 访问 https://www.nvidia.cn/Download/index.aspx?lang=cn
-# 选择: GeForce -> GeForce RTX 50 Series -> RTX 5060 Ti -> Windows 11 -> 生产分支
-# 下载并运行安装程序，选择"精简安装"
+    # 方法 B: 如果 winget 不可用或版本不够新，手动下载
+    # 访问 https://www.nvidia.cn/Download/index.aspx?lang=cn
+    # 选择: GeForce -> GeForce RTX 50 Series -> RTX 5060 Ti -> Windows 11 -> 生产分支
+    # 下载并运行安装程序，选择"精简安装"
+}
 ```
 
 ### 1.3 验证驱动安装
@@ -270,43 +302,53 @@ python -c "import torch; print('cuDNN:', torch.backends.cudnn.is_available()); p
 ### 3.1 安装 uv
 
 ```powershell
-Write-Host "正在安装 uv ..." -ForegroundColor Cyan
-$uvInstallUrl = "https://astral.sh/uv/install.ps1"
-Invoke-RestMethod $uvInstallUrl | Invoke-Expression
+# 检查 uv 是否已安装
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    Write-Host "uv 已安装: $(uv --version)" -ForegroundColor Green
+} else {
+    Write-Host "正在安装 uv ..." -ForegroundColor Cyan
+    $uvInstallUrl = "https://astral.sh/uv/install.ps1"
+    Invoke-RestMethod $uvInstallUrl | Invoke-Expression
 
-# 刷新环境变量
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    # 刷新环境变量
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-uv --version
-Write-Host "uv 安装完成" -ForegroundColor Green
+    uv --version
+    Write-Host "uv 安装完成" -ForegroundColor Green
+}
 ```
 
 ### 3.2 安装 Miniconda（备选环境管理）
 
 ```powershell
-Write-Host "正在下载 Miniconda ..." -ForegroundColor Cyan
-$condaUrl = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
-$condaInstaller = "$ENV:AI_DEV_ROOT\tools\miniconda_installer.exe"
+# 检查 Miniconda 是否已安装
+if (Get-Command conda -ErrorAction SilentlyContinue) {
+    Write-Host "Miniconda 已安装: $(conda --version)" -ForegroundColor Green
+} else {
+    Write-Host "正在下载 Miniconda ..." -ForegroundColor Cyan
+    $condaUrl = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+    $condaInstaller = "$ENV:AI_DEV_ROOT\tools\miniconda_installer.exe"
 
-Invoke-WebRequest -Uri $condaUrl -OutFile $condaInstaller -UseBasicParsing
+    Invoke-WebRequest -Uri $condaUrl -OutFile $condaInstaller -UseBasicParsing
 
-# 静默安装到指定目录
-Write-Host "正在安装 Miniconda（静默安装，预计 3-5 分钟）..." -ForegroundColor Cyan
-$condaArgs = "/S", "/InstallationType=JustMe", "/AddToPath=1", "/RegisterPython=0", "/D=$ENV:CONDA_DIR"
-Start-Process -FilePath $condaInstaller -ArgumentList $condaArgs -Wait -NoNewWindow
+    # 静默安装到指定目录
+    Write-Host "正在安装 Miniconda（静默安装，预计 3-5 分钟）..." -ForegroundColor Cyan
+    $condaArgs = "/S", "/InstallationType=JustMe", "/AddToPath=1", "/RegisterPython=0", "/D=$ENV:CONDA_DIR"
+    Start-Process -FilePath $condaInstaller -ArgumentList $condaArgs -Wait -NoNewWindow
 
-# 清理
-Remove-Item $condaInstaller -Force -ErrorAction SilentlyContinue
+    # 清理
+    Remove-Item $condaInstaller -Force -ErrorAction SilentlyContinue
 
-# 初始化 conda for PowerShell
-$condaExe = "$ENV:CONDA_DIR\Scripts\conda.exe"
-& $condaExe init powershell
+    # 初始化 conda for PowerShell
+    $condaExe = "$ENV:CONDA_DIR\Scripts\conda.exe"
+    & $condaExe init powershell
 
-# 刷新环境
-$env:Path = "$ENV:CONDA_DIR\Scripts;$ENV:CONDA_DIR\condabin;$ENV:CONDA_DIR\Library\bin;" + $env:Path
+    # 刷新环境
+    $env:Path = "$ENV:CONDA_DIR\Scripts;$ENV:CONDA_DIR\condabin;$ENV:CONDA_DIR\Library\bin;" + $env:Path
 
-conda --version
-Write-Host "Miniconda 安装完成" -ForegroundColor Green
+    conda --version
+    Write-Host "Miniconda 安装完成" -ForegroundColor Green
+}
 ```
 
 ### 3.3 创建主开发虚拟环境（使用 uv）
@@ -314,8 +356,14 @@ Write-Host "Miniconda 安装完成" -ForegroundColor Green
 ```powershell
 $projectEnv = "$ENV:AI_DEV_ROOT\projects\main-env"
 
-# 创建虚拟环境，指定 Python 3.12
-uv venv $projectEnv --python 3.12
+# 仅在虚拟环境不存在时创建
+if (-not (Test-Path "$projectEnv\Scripts\python.exe")) {
+    Write-Host "创建虚拟环境..." -ForegroundColor Cyan
+    uv venv $projectEnv --python 3.12
+    Write-Host "虚拟环境创建完成" -ForegroundColor Green
+} else {
+    Write-Host "虚拟环境已存在: $projectEnv" -ForegroundColor Green
+}
 
 # 激活环境
 & "$projectEnv\Scripts\Activate.ps1"
@@ -323,7 +371,7 @@ uv venv $projectEnv --python 3.12
 # 验证
 python --version
 pip --version
-Write-Host "主虚拟环境创建完成: $projectEnv" -ForegroundColor Green
+Write-Host "主虚拟环境就绪: $projectEnv" -ForegroundColor Green
 ```
 
 ---
@@ -333,19 +381,23 @@ Write-Host "主虚拟环境创建完成: $projectEnv" -ForegroundColor Green
 ### 4.1 配置 pip 镜像源（加速下载）
 
 ```powershell
-# 创建 pip 配置文件
+# 仅在 pip.ini 不存在时创建
 $pipConfDir = "$env:APPDATA\pip"
-New-Item -ItemType Directory -Path $pipConfDir -Force | Out-Null
+if (-not (Test-Path "$pipConfDir\pip.ini")) {
+    New-Item -ItemType Directory -Path $pipConfDir -Force | Out-Null
 
-$pipConf = @"
+    $pipConf = @"
 [global]
 index-url = https://pypi.tuna.tsinghua.edu.cn/simple
 trusted-host = pypi.tuna.tsinghua.edu.cn
 timeout = 120
 "@
 
-Set-Content -Path "$pipConfDir\pip.ini" -Value $pipConf -Encoding UTF8
-Write-Host "pip 镜像源已配置为清华源" -ForegroundColor Green
+    Set-Content -Path "$pipConfDir\pip.ini" -Value $pipConf -Encoding UTF8
+    Write-Host "pip 镜像源已配置为清华源" -ForegroundColor Green
+} else {
+    Write-Host "pip.ini 已存在，跳过配置" -ForegroundColor Green
+}
 ```
 
 ### 4.2 安装 PyTorch（CUDA 12.8 版本）
@@ -390,33 +442,12 @@ uv pip install peft trl xformers openai anthropic google-generativeai langchain 
 uv pip install chromadb faiss-cpu sentence-transformers pillow opencv-python aiohttp python-dotenv pyyaml tomli watchdog pyperclip
 
 # 第5批: Web/API 框架
-uv pip install fastapi uvicorn starlette pydantic requests flask gradio streamlit chainlit
+uv pip install fastapi uvicorn starlette pydantic requests flask gradio streamlit chainlit playwright
 
 Write-Host "AI/ML 核心库安装完成" -ForegroundColor Green
 ```
 
-### 4.4 安装 Web/API 开发库（Vibe Coding 常用）
-
-```powershell
-uv pip install `
-    fastapi `
-    uvicorn `
-    starlette `
-    pydantic `
-    requests `
-    flask `
-    gradio `
-    streamlit `
-    chainlit `
-    playwright
-
-# 安装 playwright 浏览器（用于 Web 自动化测试）
-playwright install chromium
-
-Write-Host "Web/API 开发库安装完成" -ForegroundColor Green
-```
-
-### 4.5 安装代码质量与工具库
+### 4.4 安装代码质量与工具库
 
 ```powershell
 uv pip install ruff mypy pytest pytest-asyncio black isort pre-commit ipdb py-spy
@@ -424,17 +455,22 @@ uv pip install ruff mypy pytest pytest-asyncio black isort pre-commit ipdb py-sp
 Write-Host "工具库安装完成" -ForegroundColor Green
 ```
 
-### 4.6 配置 Hugging Face 缓存目录
+### 4.5 配置 Hugging Face 缓存目录
 
 ```powershell
-# 将 HF 模型缓存指向大容量目录
-[System.Environment]::SetEnvironmentVariable("HF_HOME", "$ENV:AI_DEV_ROOT\cache\huggingface", "User")
-[System.Environment]::SetEnvironmentVariable("HUGGINGFACE_HUB_CACHE", "$ENV:AI_DEV_ROOT\cache\huggingface\hub", "User")
-$env:HF_HOME = "$ENV:AI_DEV_ROOT\cache\huggingface"
-$env:HUGGINGFACE_HUB_CACHE = "$ENV:AI_DEV_ROOT\cache\huggingface\hub"
+# 仅在环境变量未设置或目录不存在时配置
+$currentHF = [System.Environment]::GetEnvironmentVariable("HF_HOME", "User")
+if ((-not $currentHF) -or (-not (Test-Path "$ENV:AI_DEV_ROOT\cache\huggingface"))) {
+    [System.Environment]::SetEnvironmentVariable("HF_HOME", "$ENV:AI_DEV_ROOT\cache\huggingface", "User")
+    [System.Environment]::SetEnvironmentVariable("HUGGINGFACE_HUB_CACHE", "$ENV:AI_DEV_ROOT\cache\huggingface\hub", "User")
+    $env:HF_HOME = "$ENV:AI_DEV_ROOT\cache\huggingface"
+    $env:HUGGINGFACE_HUB_CACHE = "$ENV:AI_DEV_ROOT\cache\huggingface\hub"
 
-New-Item -ItemType Directory -Path "$ENV:AI_DEV_ROOT\cache\huggingface\hub" -Force | Out-Null
-Write-Host "Hugging Face 缓存目录已配置" -ForegroundColor Green
+    New-Item -ItemType Directory -Path "$ENV:AI_DEV_ROOT\cache\huggingface\hub" -Force | Out-Null
+    Write-Host "Hugging Face 缓存目录已配置" -ForegroundColor Green
+} else {
+    Write-Host "Hugging Face 缓存已配置: $currentHF" -ForegroundColor Green
+}
 ```
 
 ---
@@ -489,14 +525,19 @@ if (Test-Path $codeBin -and ($env:Path -notlike "*$codeBin*")) {
     $env:Path = "$codeBin;$env:Path"
 }
 
-# 关键扩展（先安装）
+# 关键扩展（先安装，检查是否已安装过）
 $criticalExts = @(
     "continue.continue",   # 开源 AI 编程助手（Vibe Coding 核心）
     "ms-python.python"     # Python 官方支持
 )
 foreach ($ext in $criticalExts) {
-    Write-Host "安装扩展: $ext" -ForegroundColor DarkGray
-    & code --install-extension $ext --force 2>$null
+    $installed = & code --list-extensions 2>$null | Select-String $ext
+    if ($installed) {
+        Write-Host "扩展已安装: $ext" -ForegroundColor Green
+    } else {
+        Write-Host "安装扩展: $ext" -ForegroundColor DarkGray
+        & code --install-extension $ext --force 2>$null
+    }
 }
 
 # 可选扩展（用户可后续在 IDE 中自行安装）
@@ -556,7 +597,12 @@ $settings = @'
 
 foreach ($dir in @($vscodeDir, $cursorDir)) {
     if (Test-Path $dir) {
-        Set-Content -Path "$dir\settings.json" -Value $settings -Encoding UTF8
+        $settingsFile = "$dir\settings.json"
+        if (Test-Path $settingsFile) {
+            Write-Host "settings.json 已存在: $settingsFile（将被覆盖）" -ForegroundColor Yellow
+        }
+        Set-Content -Path $settingsFile -Value $settings -Encoding UTF8
+        Write-Host "IDE 配置已写入: $settingsFile" -ForegroundColor Green
     }
 }
 Write-Host "IDE 配置完成" -ForegroundColor Green
@@ -590,11 +636,16 @@ if (Test-Path $ollamaBin -and ($env:Path -notlike "*$ollamaBin*")) {
 ### 6.2 配置 Ollama 模型存储路径
 
 ```powershell
-# 将 Ollama 模型存储到 D 盘
-[System.Environment]::SetEnvironmentVariable("OLLAMA_MODELS", "$ENV:AI_DEV_ROOT\models\ollama", "User")
+# 仅在未设置时配置 Ollama 模型路径
+$currentOllama = [System.Environment]::GetEnvironmentVariable("OLLAMA_MODELS", "User")
+if (-not $currentOllama) {
+    [System.Environment]::SetEnvironmentVariable("OLLAMA_MODELS", "$ENV:AI_DEV_ROOT\models\ollama", "User")
+    Write-Host "Ollama 模型目录已配置" -ForegroundColor Green
+} else {
+    Write-Host "Ollama 模型目录已设置: $currentOllama" -ForegroundColor Green
+}
 $env:OLLAMA_MODELS = "$ENV:AI_DEV_ROOT\models\ollama"
 New-Item -ItemType Directory -Path "$ENV:AI_DEV_ROOT\models\ollama" -Force | Out-Null
-Write-Host "Ollama 模型目录已配置" -ForegroundColor Green
 ```
 
 ### 6.3 拉取推荐模型（本节暂不实施）
@@ -607,19 +658,25 @@ Write-Host "Ollama 模型目录已配置" -ForegroundColor Green
 Start-Process "ollama" -ArgumentList "serve" -WindowStyle Hidden
 Start-Sleep -Seconds 5
 
-# === Vibe Coding 专用模型（推荐按需拉取，每个几个GB）===
+# === Vibe Coding 专用模型（推荐按需拉取，检查已安装后再拉取）===
 
 # 模型 1: Qwen3 8B - 中文 Vibe Coding 首选，16G 显存轻松运行
-Write-Host "拉取 qwen3:8b ..." -ForegroundColor Cyan
-ollama pull qwen3:8b
+if (-not (ollama list 2>$null | Select-String "qwen3:8b")) {
+    Write-Host "拉取 qwen3:8b ..." -ForegroundColor Cyan
+    ollama pull qwen3:8b
+} else { Write-Host "qwen3:8b 已存在" -ForegroundColor Green }
 
 # 模型 2: DeepSeek-Coder-V2-Lite - 代码生成能力强
-Write-Host "拉取 deepseek-coder-v2:16b ..." -ForegroundColor Cyan
-ollama pull deepseek-coder-v2:16b
+if (-not (ollama list 2>$null | Select-String "deepseek-coder-v2:16b")) {
+    Write-Host "拉取 deepseek-coder-v2:16b ..." -ForegroundColor Cyan
+    ollama pull deepseek-coder-v2:16b
+} else { Write-Host "deepseek-coder-v2:16b 已存在" -ForegroundColor Green }
 
 # 模型 3: Qwen2.5-Coder 7B - 轻量代码模型
-Write-Host "拉取 qwen2.5-coder:7b ..." -ForegroundColor Cyan
-ollama pull qwen2.5-coder:7b
+if (-not (ollama list 2>$null | Select-String "qwen2.5-coder:7b")) {
+    Write-Host "拉取 qwen2.5-coder:7b ..." -ForegroundColor Cyan
+    ollama pull qwen2.5-coder:7b
+} else { Write-Host "qwen2.5-coder:7b 已存在" -ForegroundColor Green }
 
 # 模型 4: Llama 4 Scout (如果可用，16B 参数)
 # ollama pull llama4-scout:16b
@@ -630,9 +687,11 @@ Write-Host "本地 LLM 模型拉取完成" -ForegroundColor Green
 ### 6.4 配置 Continue 插件使用本地模型
 
 ```powershell
-# Continue 配置文件
+# Continue 配置文件（仅首次创建）
 $continueDir = "$env:APPDATA\Continue\config"
 New-Item -ItemType Directory -Path $continueDir -Force | Out-Null
+
+if (-not (Test-Path "$continueDir\config.json")) {
 
 $continueConfig = @'
 {
@@ -699,7 +758,10 @@ $continueConfig = @'
 '@
 
 Set-Content -Path "$continueDir\config.json" -Value $continueConfig -Encoding UTF8
-Write-Host "Continue 插件配置完成" -ForegroundColor Green
+    Write-Host "Continue 插件配置完成" -ForegroundColor Green
+} else {
+    Write-Host "Continue 配置已存在，跳过" -ForegroundColor Green
+}
 ```
 
 ---
@@ -708,30 +770,42 @@ Write-Host "Continue 插件配置完成" -ForegroundColor Green
 
 ### 7.1 OpenCode（本环境使用的 AI Agent）
 
-OpenCode（anomalyco/opencode）已通过 Git 克隆并构建，无需额外安装。执行以下命令从源码构建：
+OpenCode（anomalyco/opencode）已在上方 "人工准备阶段" 完成安装。如需更新：
 
 ```powershell
-# 已在此环境中运行，无需重复安装
-# 若需更新: git pull && cd packages/opencode && npm run build
+cd opencode-dev\packages\opencode
+git pull
+npm run build
 ```
 
 ### 7.2 安装 Gemini CLI（Google 官方，可选）
 
 ```powershell
-# 可选，需要时运行
-npm install -g @google/gemini-cli 2>$null
-Write-Host "Gemini CLI 安装完成" -ForegroundColor Green
+# 检查是否已安装
+if (Get-Command gemini -ErrorAction SilentlyContinue) {
+    Write-Host "Gemini CLI 已安装" -ForegroundColor Green
+} else {
+    Write-Host "正在安装 Gemini CLI..." -ForegroundColor DarkGray
+    npm install -g @google/gemini-cli 2>$null
+    Write-Host "Gemini CLI 安装完成" -ForegroundColor Green
+}
 ```
 
 ### 7.3 安装 aider（AI 结对编程 CLI）
 
 ```powershell
-uv pip install aider-chat
+# 检查 aider 是否已安装
+$packageRoot = (Split-Path (Get-Command python -ErrorAction SilentlyContinue).Source -Parent) -replace "\\$", ""
+if (Get-Command aider -ErrorAction SilentlyContinue) {
+    Write-Host "aider 已安装: $(aider --version)" -ForegroundColor Green
+} else {
+    uv pip install aider-chat
 
-# 注意: aider 会降级 huggingface-hub 到 1.4.1，需重新升级
-uv pip install "huggingface-hub>=1.21.0"
+    # 注意: aider 会降级 huggingface-hub 到 1.4.1，需重新升级
+    uv pip install "huggingface-hub>=1.21.0"
 
-Write-Host "aider 安装完成" -ForegroundColor Green
+    Write-Host "aider 安装完成" -ForegroundColor Green
+}
 # 使用方式: aider --model ollama/qwen3:8b
 ```
 
@@ -741,15 +815,10 @@ Write-Host "aider 安装完成" -ForegroundColor Green
 
 ### 8.1 安装 Git
 
+> Git 已在上方 "人工准备阶段" 完成安装，此处仅做确认。如未安装请参考前置条件 2。
+
 ```powershell
-# check if git already exist.
 git --version
-
-# if not exist, then install it.
-winget install Git.Git --accept-package-agreements --accept-source-agreements
-
-# 刷新 PATH
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 ```
 
 ### 8.2 配置 Git
@@ -772,7 +841,13 @@ Write-Host "Git 配置完成" -ForegroundColor Green
 ### 8.3 配置 Git 全局 .gitignore
 
 ```powershell
-$gitignore = @'
+$gitignorePath = "$env:USERPROFILE\.gitignore"
+
+# 仅在文件不存在时创建
+if (Test-Path $gitignorePath) {
+    Write-Host ".gitignore 已存在，跳过创建" -ForegroundColor Green
+} else {
+    $gitignore = @'
 # Python
 __pycache__/
 *.py[cod]
@@ -832,10 +907,11 @@ desktop.ini
 models/
 '@
 
-$gitignorePath = "$env:USERPROFILE\.gitignore"
-Set-Content -Path $gitignorePath -Value $gitignore -Encoding UTF8
+    Set-Content -Path $gitignorePath -Value $gitignore -Encoding UTF8
+    Write-Host "全局 .gitignore 已创建" -ForegroundColor Green
+}
 git config --global core.excludesFile $gitignorePath
-Write-Host "全局 .gitignore 配置完成" -ForegroundColor Green
+Write-Host "Git ignore 配置完成" -ForegroundColor Green
 ```
 
 ---
@@ -846,28 +922,38 @@ Write-Host "全局 .gitignore 配置完成" -ForegroundColor Green
 
 ```powershell
 $demoProject = "$ENV:AI_DEV_ROOT\projects\demo-vibe-project"
-New-Item -ItemType Directory -Path $demoProject | Out-Null
 
-$projectDirs = @(
-    "$demoProject\src",
-    "$demoProject\src\core",
-    "$demoProject\src\api",
-    "$demoProject\src\utils",
-    "$demoProject\tests",
-    "$demoProject\notebooks",
-    "$demoProject\scripts",
-    "$demoProject\data",
-    "$demoProject\output"
-)
-foreach ($d in $projectDirs) {
-    New-Item -ItemType Directory -Path $d | Out-Null
+# 仅在项目目录不存在时创建
+if (-not (Test-Path $demoProject)) {
+    New-Item -ItemType Directory -Path $demoProject -Force | Out-Null
+
+    $projectDirs = @(
+        "$demoProject\src",
+        "$demoProject\src\core",
+        "$demoProject\src\api",
+        "$demoProject\src\utils",
+        "$demoProject\tests",
+        "$demoProject\notebooks",
+        "$demoProject\scripts",
+        "$demoProject\data",
+        "$demoProject\output"
+    )
+    foreach ($d in $projectDirs) {
+        New-Item -ItemType Directory -Path $d -Force | Out-Null
+    }
+    Write-Host "项目结构已创建: $demoProject" -ForegroundColor Green
+} else {
+    Write-Host "项目目录已存在: $demoProject" -ForegroundColor Green
 }
 ```
 
 ### 9.2 创建 pyproject.toml
 
 ```powershell
-$pyproject = @'
+$pyprojectPath = "$demoProject\pyproject.toml"
+# 仅在文件不存在时创建
+if (-not (Test-Path $pyprojectPath)) {
+    $pyproject = @'
 [project]
 name = "demo-vibe-project"
 version = "0.1.0"
@@ -926,13 +1012,22 @@ dev-dependencies = [
 ]
 '@
 
-Set-Content -Path "$demoProject\pyproject.toml" -Value $pyproject -Encoding UTF8
+    Set-Content -Path $pyprojectPath -Value $pyproject -Encoding UTF8
+    Write-Host "pyproject.toml 已创建" -ForegroundColor Green
+} else {
+    Write-Host "pyproject.toml 已存在，跳过" -ForegroundColor Green
+}
 ```
 
 ### 9.3 创建 .env 模板
 
 ```powershell
-$envTemplate = @'
+$envExamplePath = "$demoProject\.env.example"
+$envPath = "$demoProject\.env"
+
+# 仅创建不存在的文件
+if (-not (Test-Path $envExamplePath)) {
+    $envTemplate = @'
 # === API Keys（按需填写）===
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
@@ -952,8 +1047,17 @@ DEBUG=true
 LOG_LEVEL=DEBUG
 '@
 
-Set-Content -Path "$demoProject\.env.example" -Value $envTemplate -Encoding UTF8
-Copy-Item "$demoProject\.env.example" "$demoProject\.env"
+    Set-Content -Path $envExamplePath -Value $envTemplate -Encoding UTF8
+    Write-Host ".env.example 已创建" -ForegroundColor Green
+} else {
+    Write-Host ".env.example 已存在，跳过" -ForegroundColor Green
+}
+if (-not (Test-Path $envPath)) {
+    Copy-Item $envExamplePath $envPath
+    Write-Host ".env 已创建（请填入你的 API Key）" -ForegroundColor Green
+} else {
+    Write-Host ".env 已存在，跳过" -ForegroundColor Green
+}
 Write-Host "项目模板创建完成: $demoProject" -ForegroundColor Green
 ```
 
@@ -1065,7 +1169,13 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 "@
 
 $verifyPath = "$ENV:AI_DEV_ROOT\scripts\verify_env.ps1"
-Set-Content -Path $verifyPath -Value $verifyScript -Encoding UTF8
+# 仅首次创建，后续更新可手动删除此文件后重新生成
+if (-not (Test-Path $verifyPath)) {
+    Set-Content -Path $verifyPath -Value $verifyScript -Encoding UTF8
+    Write-Host "验证脚本已创建: $verifyPath" -ForegroundColor Green
+} else {
+    Write-Host "验证脚本已存在，跳过创建" -ForegroundColor Green
+}
 
 # 运行验证
 Write-Host "运行环境验证脚本..." -ForegroundColor Cyan
@@ -1129,8 +1239,13 @@ Write-Host "  Environment ready!" -ForegroundColor Green
 Write-Host "  Shortcuts: ai-gpu | ai-models | ai-list | ai-verify | ai-note | ai-serve`n" -ForegroundColor DarkGray
 '@
 
-Set-Content -Path "$ENV:AI_DEV_ROOT\scripts\activate.ps1" -Value $activateScript -Encoding UTF8
-Write-Host "激活脚本创建完成: $ENV:AI_DEV_ROOT\scripts\activate.ps1" -ForegroundColor Green
+$activatePath = "$ENV:AI_DEV_ROOT\scripts\activate.ps1"
+if (-not (Test-Path $activatePath)) {
+    Set-Content -Path $activatePath -Value $activateScript -Encoding UTF8
+    Write-Host "激活脚本创建完成: $activatePath" -ForegroundColor Green
+} else {
+    Write-Host "激活脚本已存在: $activatePath" -ForegroundColor Green
+}
 
 # 在 PowerShell Profile 中添加别名 'ai'
 $aliasEntry = @"
@@ -1159,18 +1274,22 @@ if (Test-Path "D:\AI_Dev\scripts\activate.ps1") {
 Set-Alias -Name ai-activate -Value "D:\AI_Dev\scripts\activate.ps1" -ErrorAction SilentlyContinue
 '@
 
-if (-not (Test-Path $PROFILE)) {
-    New-Item -ItemType File -Path $PROFILE -Force | Out-Null
+# 仅在 Profile 中不存在此入口时追加
+if (-not (Select-String -Path $PROFILE -Pattern "AI Dev Environment Auto-Load" -Quiet -ErrorAction SilentlyContinue)) {
+    if (-not (Test-Path $PROFILE)) {
+        New-Item -ItemType File -Path $PROFILE -Force | Out-Null
+    }
+    Add-Content -Path $PROFILE -Value $profileContent -Encoding UTF8
+    Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
+} else {
+    Write-Host "PowerShell Profile 已包含 AI Dev 配置，跳过" -ForegroundColor Green
 }
-Add-Content -Path $PROFILE -Value $profileContent -Encoding UTF8
-Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 ```
 
 ---
 
 ## 附录 A：故障排查指南
 
-```markdown
 ### A.1 nvidia-smi 报错 "无法识别的命令"
 - 驱动未安装或损坏，重新运行阶段 1
 
@@ -1200,7 +1319,6 @@ Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 - 确保驱动版本 >= 570.xx
 - 如果 PyTorch CUDA 12.8 不可用，使用 12.6 版本（新驱动向后兼容）
 - Blackwell 架构的 compute capability 为 sm_120，部分旧版本软件可能不识别
-```
 
 ---
 
@@ -1266,7 +1384,6 @@ Write-Host "PowerShell Profile 已配置" -ForegroundColor Green
 ---
 
 *文档版本: 1.1 | 生成时间: 2025-07-11 | 最后实际部署: 2026-06-27 | 适用 GPU: NVIDIA RTX 5060 Ti 16GB*
-```
 
 ---
 
